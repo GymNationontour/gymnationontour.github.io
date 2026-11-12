@@ -1,0 +1,47 @@
+# Match days: check the official Dubai 7s results every 2 minutes and save any change to live.json
+# on the `data` branch, which the page re-reads every 2 minutes. One run per hour, each looping ~62 min,
+# Dubai 07:00-20:00 on 27-29 Nov (UTC 03:00-16:00). Run it by hand from the Actions tab any time.
+name: Live results (match days)
+on:
+  schedule:
+    - cron: "0 3-15 27-29 11 *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "How long to keep checking (minutes)"
+        default: "62"
+permissions:
+  contents: write
+concurrency:
+  group: live-results
+  cancel-in-progress: true
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check results every 2 minutes
+        env:
+          MINUTES: ${{ github.event.inputs.minutes || '62' }}
+        run: |
+          cp fetch_results.py /tmp/fetch_results.py
+          git config user.name "dubai7s-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin data || true
+          if git rev-parse --verify -q origin/data >/dev/null; then git checkout -B data origin/data; else git checkout --orphan data; git rm -rfq . ; fi
+          end=$(( $(date +%s) + MINUTES*60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            if D7S_OUT="$PWD/new.json" python3 /tmp/fetch_results.py --force; then
+              # compare everything except the timestamp, so we only commit real changes (or every ~30 min as a heartbeat)
+              strip() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d.pop('fetched',None); d.pop('weather',None); print(json.dumps(d,sort_keys=True))" "$1" 2>/dev/null; }
+              age=$(( $(date +%s) - $(git log -1 --format=%ct 2>/dev/null || echo 0) ))
+              if [ ! -f live.json ] || [ "$(strip new.json)" != "$(strip live.json)" ] || [ "$age" -gt 1800 ]; then
+                mv new.json live.json && git add live.json && git commit -qm "results $(date -u +%H:%M)" && git push -q origin data && echo "pushed update"
+              else rm -f new.json; fi
+            fi
+            sleep 120
+          done

@@ -1,0 +1,40 @@
+# Fetches the official Emirates Dubai 7s results for GYMNATION into live.js and redeploys the site.
+# Match days 27-29 Nov, Dubai 07:00-20:00 (UTC 03:00-16:00): every 5 min. Otherwise every 3 h.
+name: Refresh results + deploy
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/5 3-16 27-29 11 *"
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch official results + weather
+        run: D7S_OUT="$PWD/live.js" python3 fetch_results.py --force
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -R index.html robots.txt img live.js _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
