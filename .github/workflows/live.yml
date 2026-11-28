@@ -1,6 +1,8 @@
 # Match days: check the official Dubai 7s results every 2 minutes and save any change to live.json
-# on the `data` branch, which the page re-reads every 2 minutes. One run per hour, each looping ~62 min,
-# Dubai 07:00-20:00 on 27-29 Nov (UTC 03:00-16:00). Run it by hand from the Actions tab any time.
+# on the `data` branch, which the page re-reads every 2 minutes.
+# GitHub's cron skips most slots on busy days, so each run loops for up to ~5h40m and then starts the
+# next run itself (workflow_dispatch), day and night, until Sun 29 Nov 20:00 Dubai. The cron below
+# is only a backup kick-off. Run it by hand from the Actions tab any time.
 name: Live results (match days)
 on:
   schedule:
@@ -9,16 +11,17 @@ on:
     inputs:
       minutes:
         description: "How long to keep checking (minutes)"
-        default: "62"
+        default: "340"
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: live-results
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   live:
     runs-on: ubuntu-latest
-    timeout-minutes: 80
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,7 +29,7 @@ jobs:
           python-version: "3.12"
       - name: Check results every 2 minutes
         env:
-          MINUTES: ${{ github.event.inputs.minutes || '62' }}
+          MINUTES: ${{ github.event.inputs.minutes || '340' }}
         run: |
           cp fetch_results.py /tmp/fetch_results.py
           git config user.name "dubai7s-bot"
@@ -45,3 +48,12 @@ jobs:
             fi
             sleep 120
           done
+      - name: Start the next run while match hours continue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # keep chaining (overnight too) until Sun 29 Nov 20:00 Dubai = 16:00 UTC
+          if [ "$(date -u +%s)" -lt "$(date -u -d '2026-11-29 16:00' +%s)" ]; then
+            gh workflow run live.yml -R "$GITHUB_REPOSITORY" -f minutes=340 && echo "next run started"
+          else echo "tournament over, not chaining"; fi
